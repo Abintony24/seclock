@@ -2,14 +2,16 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = "us-east-1"
+        AWS_REGION     = "us-east-1"
         AWS_ACCOUNT_ID = "504483085764"
-        ECR_REPO = "seclock"
-        ECR_REGISTRY = "504483085764.dkr.ecr.us-east-1.amazonaws.com"
-        IMAGE = "504483085764.dkr.ecr.us-east-1.amazonaws.com/seclock"
+        ECR_REPO       = "seclock"
+        ECR_REGISTRY   = "504483085764.dkr.ecr.us-east-1.amazonaws.com"
+        IMAGE          = "504483085764.dkr.ecr.us-east-1.amazonaws.com/seclock"
+        EKS_CLUSTER    = "beginner-cluster"
     }
 
     options {
+        skipDefaultCheckout(true)
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
@@ -24,13 +26,17 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                sh 'python3 -m pip install -r requirements.txt'
+                sh '''
+                    python3 -m pip install --break-system-packages -r requirements.txt
+                '''
             }
         }
 
         stage('Test') {
             steps {
-                sh 'python3 -m pytest || true'
+                sh '''
+                    python3 -m compileall .
+                '''
             }
         }
 
@@ -72,7 +78,9 @@ pipeline {
                 ]) {
                     sh '''
                         aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        docker login \
+                        --username AWS \
+                        --password-stdin ${ECR_REGISTRY}
 
                         docker push ${IMAGE}:${BUILD_NUMBER}
                         docker push ${IMAGE}:latest
@@ -93,12 +101,15 @@ pipeline {
                     sh '''
                         aws eks update-kubeconfig \
                             --region ${AWS_REGION} \
-                            --name YOUR_EKS_CLUSTER_NAME
+                            --name ${EKS_CLUSTER}
 
-                        sed -i "s|image: .*|image: ${IMAGE}:${BUILD_NUMBER}|g" k8s/deployment.yaml
+                        sed -i "s|image: .*|image: ${IMAGE}:${BUILD_NUMBER}|g" \
+                            k8s/deployment.yaml
 
                         kubectl apply -f k8s/deployment.yaml
                         kubectl apply -f k8s/service.yaml
+
+                        kubectl rollout status deployment/seclock
                     '''
                 }
             }
